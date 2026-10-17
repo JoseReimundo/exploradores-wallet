@@ -38,7 +38,6 @@ import java.security.MessageDigest
 import java.text.SimpleDateFormat
 import java.util.*
 
-// ================= 1. BASE DE DATOS SQLITE (ROOM) =================
 @Entity(tableName = "participants")
 data class ParticipantEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
@@ -69,13 +68,7 @@ data class TicketWithOwner(val barcode: String, val participantId: Long, val par
 
 @Dao
 interface WalletDao {
-    @Query("""
-        SELECT p.id, p.name, COUNT(t.barcode) AS points 
-        FROM participants p 
-        LEFT JOIN tickets t ON p.id = t.participantId 
-        GROUP BY p.id 
-        ORDER BY points DESC, p.name ASC
-    """)
+    @Query("SELECT p.id, p.name, COUNT(t.barcode) AS points FROM participants p LEFT JOIN tickets t ON p.id = t.participantId GROUP BY p.id ORDER BY points DESC, p.name ASC")
     fun getParticipantsWithPoints(): Flow<List<ParticipantWithPoints>>
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)
@@ -84,13 +77,7 @@ interface WalletDao {
     @Delete
     suspend fun deleteParticipant(participant: ParticipantEntity)
 
-    @Query("""
-        SELECT t.barcode, t.participantId, p.name AS participantName, t.scannedAt 
-        FROM tickets t 
-        INNER JOIN participants p ON t.participantId = p.id 
-        WHERE t.barcode = :barcode 
-        LIMIT 1
-    """)
+    @Query("SELECT t.barcode, t.participantId, p.name AS participantName, t.scannedAt FROM tickets t INNER JOIN participants p ON t.participantId = p.id WHERE t.barcode = :barcode LIMIT 1")
     suspend fun getTicketWithOwner(barcode: String): TicketWithOwner?
 
     @Query("SELECT * FROM tickets WHERE participantId = :participantId ORDER BY scannedAt DESC")
@@ -123,7 +110,6 @@ abstract class WalletDatabase : RoomDatabase() {
     }
 }
 
-// ================= 2. LÓGICA Y VIEWMODEL =================
 object TicketValidator {
     private const val SECRET_SALT = "ExploradoresClub_ClaveSecreta"
     const val STRICT_VALIDATION = false
@@ -215,7 +201,6 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
     fun getTicketsForParticipant(participantId: Long): Flow<List<TicketEntity>> = dao.getTicketsForParticipant(participantId)
 }
 
-// ================= 3. INTERFAZ GOOGLE MATERIAL DESIGN 3 =================
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -474,4 +459,91 @@ fun ExploradoresWalletScreen(vm: WalletViewModel = viewModel()) {
                         Text("${participantTickets.size} puntos acumulados", color = MaterialTheme.colorScheme.primary)
                     }
                     IconButton(onClick = {
-                        vm.deleteParti
+                        vm.deleteParticipant(participant)
+                        selectedParticipantForDetails = null
+                        scope.launch { snackbarHostState.showSnackbar("${participant.name} eliminado") }
+                    }) {
+                        Icon(Icons.Outlined.DeleteOutline, contentDescription = "Eliminar", tint = MaterialTheme.colorScheme.error)
+                    }
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+                if (participantTickets.isEmpty()) {
+                    Text(
+                        "No tiene tickets asignados actualmente.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(vertical = 24.dp)
+                    )
+                } else {
+                    LazyColumn(modifier = Modifier.heightIn(max = 320.dp)) {
+                        items(participantTickets, key = { it.barcode }) { ticket ->
+                            ListItem(
+                                headlineContent = { Text("Ticket #${ticket.barcode}") },
+                                supportingContent = { Text(dateFormat.format(Date(ticket.scannedAt))) },
+                                trailingContent = {
+                                    TextButton(onClick = {
+                                        vm.revokeTicket(ticket.barcode) {
+                                            scope.launch { snackbarHostState.showSnackbar("Ticket ${ticket.barcode} restado") }
+                                        }
+                                    }) {
+                                        Text("-1 pt", color = MaterialTheme.colorScheme.error)
+                                    }
+                                }
+                            )
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(24.dp))
+            }
+        }
+    }
+}
+
+@Composable
+fun ParticipantCard(participant: ParticipantWithPoints, onClick: () -> Unit) {
+    OutlinedCard(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large
+    ) {
+        Row(
+            modifier = Modifier.padding(16.dp).fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Surface(
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.secondaryContainer,
+                    modifier = Modifier.size(46.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Text(
+                            text = participant.name.take(1).uppercase(),
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.width(16.dp))
+                Column {
+                    Text(participant.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Medium)
+                    Text("Toca para ver sus tickets", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            Surface(
+                shape = CircleShape,
+                color = if (participant.points > 0) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
+            ) {
+                Text(
+                    text = "${participant.points} pts",
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = if (participant.points > 0) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+    }
+}
